@@ -3,21 +3,27 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { cohortSeed, ipSeed } from "./seed-data";
 
-function isLocalHost(connectionString: string | undefined): boolean {
-  if (!connectionString) return true;
-  try {
-    const { hostname } = new URL(connectionString);
-    return hostname === "localhost" || hostname === "127.0.0.1";
-  } catch {
-    return true;
-  }
+function isLocalHost(url: URL): boolean {
+  return url.hostname === "localhost" || url.hostname === "127.0.0.1";
 }
 
-const connectionString = process.env.DATABASE_URL;
-const adapter = new PrismaPg({
-  connectionString,
-  ...(isLocalHost(connectionString) ? {} : { ssl: { rejectUnauthorized: false } }),
-});
+// See src/lib/prisma.ts for why sslmode has to be stripped rather than
+// just passing a sibling `ssl` option.
+function connectionConfig(raw: string | undefined) {
+  if (!raw) return { connectionString: raw };
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { connectionString: raw };
+  }
+  if (isLocalHost(url)) return { connectionString: raw };
+
+  url.searchParams.delete("sslmode");
+  return { connectionString: url.toString(), ssl: { rejectUnauthorized: false } };
+}
+
+const adapter = new PrismaPg(connectionConfig(process.env.DATABASE_URL));
 const prisma = new PrismaClient({ adapter });
 
 const WEEKS = ["W1", "W2", "W3", "W4"] as const;
