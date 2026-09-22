@@ -28,22 +28,31 @@ Stack: Next.js (App Router, Server Actions) + PostgreSQL via Prisma. No auth lay
 
    Open http://localhost:3000.
 
-## Deploying (Vercel + Neon)
+## Deploying (Vercel + Supabase)
 
-1. **Neon**: create a project at neon.tech. Grab two connection strings from
-   its dashboard: the **pooled** one (has `-pooler` in the hostname) and the
-   **direct** one.
+1. **Supabase**: create a project at supabase.com. In **Project Settings →
+   Database → Connection string**, copy two URIs:
+   - **Transaction pooler** (port `6543`, hostname like
+     `aws-0-<region>.pooler.supabase.com`) → this is `DATABASE_URL`.
+   - **Direct connection** (port `5432`, hostname like
+     `db.<project-ref>.supabase.co`) → this is `DIRECT_URL`.
+   Both have the placeholder `[YOUR-PASSWORD]` — fill in the database
+   password you set when creating the project.
 2. **Vercel**: import this GitHub repo as a new project. In its Environment
    Variables settings, set:
-   - `DATABASE_URL` → Neon's pooled connection string
-   - `DIRECT_URL` → Neon's direct connection string
+   - `DATABASE_URL` → the transaction pooler URI
+   - `DIRECT_URL` → the direct connection URI
 3. Deploy. The build runs `scripts/migrate-deploy.mjs` (applies migrations
    over `DIRECT_URL`) before `next build`; the app itself always talks to
    Postgres over pooled `DATABASE_URL`. First deploy needs seeding once:
    `DATABASE_URL=<direct-or-pooled-url> npm run db:seed` from a machine that
-   can reach the Neon DB (or `vercel env pull` first to grab the values).
+   can reach the Supabase DB (or `vercel env pull` first to grab the values).
 4. Every subsequent `git push` to the connected branch redeploys
    automatically — migrations and all.
+
+This same `DATABASE_URL`/`DIRECT_URL` split works with any pooled Postgres
+provider (Neon, Supabase, PgBouncer) without code changes — only the two
+connection strings differ.
 
 ## What's here
 
