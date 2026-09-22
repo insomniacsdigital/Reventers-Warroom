@@ -28,6 +28,23 @@ Stack: Next.js (App Router, Server Actions) + PostgreSQL via Prisma. No auth lay
 
    Open http://localhost:3000.
 
+## Deploying (Vercel + Neon)
+
+1. **Neon**: create a project at neon.tech. Grab two connection strings from
+   its dashboard: the **pooled** one (has `-pooler` in the hostname) and the
+   **direct** one.
+2. **Vercel**: import this GitHub repo as a new project. In its Environment
+   Variables settings, set:
+   - `DATABASE_URL` → Neon's pooled connection string
+   - `DIRECT_URL` → Neon's direct connection string
+3. Deploy. The build runs `scripts/migrate-deploy.mjs` (applies migrations
+   over `DIRECT_URL`) before `next build`; the app itself always talks to
+   Postgres over pooled `DATABASE_URL`. First deploy needs seeding once:
+   `DATABASE_URL=<direct-or-pooled-url> npm run db:seed` from a machine that
+   can reach the Neon DB (or `vercel env pull` first to grab the values).
+4. Every subsequent `git push` to the connected branch redeploys
+   automatically — migrations and all.
+
 ## What's here
 
 - **Dashboard** (`/`) — KPIs, cohort completion overview, and this cycle's real

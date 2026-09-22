@@ -9,6 +9,11 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
+    // This is DATABASE_URL as the CLI (migrations) sees it. For pooled
+    // providers (Neon, Supabase, PgBouncer), the `build` script in
+    // package.json swaps this to an unpooled DIRECT_URL just for
+    // `prisma migrate deploy` — see the comment there. The running app
+    // (src/lib/prisma.ts) always uses the real DATABASE_URL (pooled).
     url: process.env["DATABASE_URL"],
   },
 });
