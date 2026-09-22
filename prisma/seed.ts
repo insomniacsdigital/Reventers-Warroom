@@ -3,7 +3,21 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { cohortSeed, ipSeed } from "./seed-data";
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+function isLocalHost(connectionString: string | undefined): boolean {
+  if (!connectionString) return true;
+  try {
+    const { hostname } = new URL(connectionString);
+    return hostname === "localhost" || hostname === "127.0.0.1";
+  } catch {
+    return true;
+  }
+}
+
+const connectionString = process.env.DATABASE_URL;
+const adapter = new PrismaPg({
+  connectionString,
+  ...(isLocalHost(connectionString) ? {} : { ssl: { rejectUnauthorized: false } }),
+});
 const prisma = new PrismaClient({ adapter });
 
 const WEEKS = ["W1", "W2", "W3", "W4"] as const;
