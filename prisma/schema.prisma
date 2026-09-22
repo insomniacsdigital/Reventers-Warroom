@@ -1,0 +1,187 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PersonRole {
+  IP_CS
+  DESIGNER
+  EDITOR
+}
+
+enum StatusState {
+  PENDING
+  PARTIAL
+  DONE
+}
+
+enum Week {
+  W1
+  W2
+  W3
+  W4
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+}
+
+model Cohort {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  leaderName String
+  createdAt  DateTime @default(now())
+
+  clients              Client[]
+  rotationAssignments  RotationAssignment[]
+  tradesReleased       Trade[]              @relation("TradeReleased")
+  tradesClaimed        Trade[]              @relation("TradeClaimed")
+  cohortWeeklyStatuses CohortWeeklyStatus[]
+}
+
+model Client {
+  id       String @id @default(cuid())
+  name     String
+  cohortId String
+  cohort   Cohort @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+
+  statuses ClientIpStatus[]
+
+  @@unique([cohortId, name])
+}
+
+model Ip {
+  id                  String @id @default(cuid())
+  name                String @unique
+  defaultWeeklyTarget Int
+
+  assignments          PersonAssignment[]
+  clientStatuses       ClientIpStatus[]
+  rotationEntries      RotationEntry[]
+  trades               Trade[]
+  cohortWeeklyStatuses CohortWeeklyStatus[]
+}
+
+model Person {
+  id   String @id @default(cuid())
+  name String @unique
+
+  assignments PersonAssignment[]
+  attendance  AttendanceRecord[]
+}
+
+model PersonAssignment {
+  id       String     @id @default(cuid())
+  personId String
+  ipId     String
+  role     PersonRole
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  ip     Ip     @relation(fields: [ipId], references: [id], onDelete: Cascade)
+
+  @@unique([personId, ipId, role])
+}
+
+model ClientIpStatus {
+  id        String      @id @default(cuid())
+  clientId  String
+  ipId      String
+  status    StatusState @default(PENDING)
+  updatedAt DateTime    @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  ip     Ip     @relation(fields: [ipId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, ipId])
+}
+
+/// One monthly rotation cycle (a fresh W1-W4 schedule). Keeping cycles
+/// separate (rather than overwriting a single live W1-W4 table) is what
+/// makes month-over-month trend charts possible.
+model RotationCycle {
+  id        String   @id @default(cuid())
+  monthKey  String   @unique // e.g. "2026-09"
+  createdAt DateTime @default(now())
+
+  entries              RotationEntry[]
+  trades               Trade[]
+  cohortWeeklyStatuses CohortWeeklyStatus[]
+}
+
+model RotationEntry {
+  id       String @id @default(cuid())
+  cycleId  String
+  ipId     String
+  week     Week
+  target   Int
+  achieved Int    @default(0)
+
+  cycle       RotationCycle        @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  ip          Ip                   @relation(fields: [ipId], references: [id], onDelete: Cascade)
+  assignments RotationAssignment[]
+
+  @@unique([cycleId, ipId, week])
+}
+
+model RotationAssignment {
+  id       String @id @default(cuid())
+  entryId  String
+  cohortId String
+
+  entry  RotationEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  cohort Cohort        @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+
+  @@unique([entryId, cohortId])
+}
+
+model Trade {
+  id                String   @id @default(cuid())
+  cycleId           String
+  ipId              String
+  week              Week
+  releasedCohortId  String
+  claimedCohortId   String
+  note              String?
+  createdAt         DateTime @default(now())
+
+  cycle          RotationCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  ip             Ip            @relation(fields: [ipId], references: [id], onDelete: Cascade)
+  releasedCohort Cohort        @relation("TradeReleased", fields: [releasedCohortId], references: [id])
+  claimedCohort  Cohort        @relation("TradeClaimed", fields: [claimedCohortId], references: [id])
+}
+
+/// Per-cohort, per-IP, per-week status within a rotation cycle (PRD 6.6:
+/// Pending / Partial / Done), independent from the raw client x IP matrix.
+model CohortWeeklyStatus {
+  id       String      @id @default(cuid())
+  cycleId  String
+  cohortId String
+  ipId     String
+  week     Week
+  status   StatusState @default(PENDING)
+
+  cycle  RotationCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  cohort Cohort        @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  ip     Ip            @relation(fields: [ipId], references: [id], onDelete: Cascade)
+
+  @@unique([cycleId, cohortId, ipId, week])
+}
+
+model AttendanceRecord {
+  id       String           @id @default(cuid())
+  personId String
+  date     DateTime         @db.Date
+  status   AttendanceStatus
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([personId, date])
+}
