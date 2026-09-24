@@ -12,7 +12,7 @@ export function TradeForm({
 }: {
   monthKey: string;
   ips: { id: string; name: string }[];
-  cohorts: { id: string; code: string }[];
+  cohorts: { id: string; label: string }[];
   defaultIpId?: string;
 }) {
   const [pending, startTransition] = useTransition();
@@ -35,7 +35,11 @@ export function TradeForm({
       return;
     }
     startTransition(async () => {
-      await submitTrade({ monthKey, ipId, week, releasedCohortId: released, claimedCohortId: claimed, note });
+      const r = await submitTrade({ monthKey, ipId, week, releasedCohortId: released, claimedCohortId: claimed, note });
+      if (!r.ok) {
+        alert(r.error);
+        return;
+      }
       setNote("");
       setReleased("");
       setClaimed("");
@@ -70,7 +74,7 @@ export function TradeForm({
         <option value="">Released by…</option>
         {cohorts.map((c) => (
           <option key={c.id} value={c.id}>
-            {c.code}
+            {c.label}
           </option>
         ))}
       </select>
@@ -78,7 +82,7 @@ export function TradeForm({
         <option value="">Claimed by…</option>
         {cohorts.map((c) => (
           <option key={c.id} value={c.id}>
-            {c.code}
+            {c.label}
           </option>
         ))}
       </select>

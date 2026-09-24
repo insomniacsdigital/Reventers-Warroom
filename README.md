@@ -4,8 +4,8 @@ A real (backend + database) rebuild of the IP Production Command Center prototyp
 per `Dashboard_PRD_2`: one shared, multi-user-editable view of content production
 across Cohort Leader → Client → IP CS → IP → Designer → Editor → Output.
 
-Stack: Next.js (App Router, Server Actions) + PostgreSQL via Prisma. No auth layer
-(shared/editable-by-anyone data), matching the PRD's non-goals for this version.
+Stack: Next.js (App Router, Server Actions) + PostgreSQL via Prisma. Password sign-in with
+database sessions; admins manage people and logins in the app.
 
 ## Getting started
 
@@ -44,9 +44,8 @@ Stack: Next.js (App Router, Server Actions) + PostgreSQL via Prisma. No auth lay
    - `DIRECT_URL` → the direct connection URI
 3. Deploy. The build runs `scripts/migrate-deploy.mjs` (applies migrations
    over `DIRECT_URL`) before `next build`; the app itself always talks to
-   Postgres over pooled `DATABASE_URL`. First deploy needs seeding once:
-   `DATABASE_URL=<direct-or-pooled-url> npm run db:seed` from a machine that
-   can reach the Supabase DB (or `vercel env pull` first to grab the values).
+   Postgres over pooled `DATABASE_URL`. The build also loads
+   the launch data on the first deploy (and never again).
 4. Every subsequent `git push` to the connected branch redeploys
    automatically — migrations and all.
 
@@ -56,42 +55,23 @@ connection strings differ.
 
 ## What's here
 
-- **Dashboard** (`/`) — KPIs, cohort completion overview, and this cycle's real
-  per-IP output vs. target (replaces the old flat "8/week" banner per PRD goal #5).
-- **Client × IP Matrix** (`/matrix`) — the 3-state (Pending/Partial/Done) grid,
-  click-to-cycle, shared across everyone.
-- **Weekly Rotation** (`/rotation`) — per-IP, per-week (W1–W4) target, cohort
-  assignment, and achieved output, editable inline.
-- **Cohort Progress** (`/cohort-progress`) — a cohort's assigned IPs for a given
-  week (computed from Rotation, net of Trades), a Pending/Partial/Done status per
-  IP, and a monthly cohort roll-up.
-- **Trade-off Log** (`/trades`) — released/claimed slot ticketing per IP/week.
-- **IP CS Allocation** (`/ip-cs`) — reference roster.
-- **Attendance** (`/attendance`) — daily Present/Absent register, deduplicated by
-  person, with a monthly absence count.
-- **Trends** (`/trends`) — month-over-month output %, per-cohort completion %,
-  and attendance absence rate. PRD goal #6: this works because Rotation data is
-  now stored per calendar-month cycle instead of being overwritten in place, so
-  history naturally accumulates as months pass.
+Everyone signs in (name or email + password). **Admins** (Ishika, Unnati) have the master controls; everyone else edits only their own numbers.
 
-## Data model notes / open items carried over from the PRD (§8)
+- **Dashboard** (`/`) — the summary sheet: a June–May yearly table with, per month, the IP base, backlog carried in, IP target, achieved, gap and live, plus Festive and Non-IP target / achieved / live and total delivery. Tiles for cohorts, brands, IPs, yearly and monthly target, IP CS, designers and editors; the cohort overview; and who handles each IP.
+- **Brand × IP Matrix** (`/matrix`) — Target · Achieved · Live per brand, IP and month. Cohort leaders set their brands' targets; the cohort leader or the IP's IP CS updates achieved and live. Status (Pending / Partial / Done) follows from the numbers. **Matrix "achieved" is the IP output counted everywhere.**
+- **Weekly Rotation** (`/rotation`) — each IP's team, weekly target and W1–W4 cohorts (the same pattern every month; admins edit it), with the month's achieved from the matrix.
+- **Festive & Non-IP** (`/festive`) — cohort leaders add festive rows per brand (festival picked from the admin-managed list) with Statics / Stories / Reels target · achieved · live, and a non-IP target · achieved · live per brand. Includes a bandwidth plan by festival and format. Not part of the IP target.
+- **Cohort Progress**, **Trade-off Log**, **Trends** — as before (trades: cohort leaders and admins).
+- **Attendance** (`/attendance`) — everyone clocks in and out and sees only their own log; 8+ hours is a full day, less a half day; a forgotten clock-out is asked for at the next clock-in. Admins see everyone (months count as 30 days), each person's calendar and hours chart, and absenteeism by IP team.
+- **Admin** (`/admin`) — targets (monthly base 192, +4 per brand added after launch, per-month base overrides, achieved totals for months before the matrix), cohorts and brands (add, move between cohorts, archive, change leader), people and logins, IP teams, festival list.
 
-- **Client roster**: seeded from the prototype's roster, corrected with the PRD's
-  explicit additions/renames where unambiguous. The PRD's own tables total 51
-  clients across its cohort listing despite stating "48" — the PDF's tables were
-  visibly reordered by extraction, so exact counts need confirming against the
-  source spreadsheet. Client and cohort data lives in the database now
-  (`Cohort`/`Client` tables) and is easy to correct directly.
-- **Weekly IP targets** are still placeholders per PRD §8.2 — ask each IP CS to
-  confirm/correct theirs; edit inline on the Rotation page.
-- **W1–W4 cohort assignments** are seeded empty per PRD §8.4 — populate via the
-  Rotation page's cohort chips once the real schedule is known.
-- **Slot splitting** (PRD §8.3): Cohort Progress currently treats a shared IP-week
-  as a full slot for *each* assigned cohort (slot-count accountability), not a
-  50/50 split of the numeric target — matches the PRD's stated default.
-- **Access control** (PRD §8.5): no login yet, by design (non-goal for this
-  version) — every field is shared and editable by anyone with the link, exactly
-  like the prototype.
+### IP target rule
+
+`target(month) = base(month) + shortfall carried from the previous month`, where base = 192 + 4 × brands added after launch (unless an admin sets a base for that month), shortfall = max(0, target − achieved), and a surplus never lowers later targets. The carry runs within the June–May year and starts fresh each June.
+
+### Signing in for the first time
+
+The first deploy loads the launch data once (`scripts/seed-once.mjs` → `prisma/seed.ts`; later deploys never overwrite anything). Ishika and Unnati sign in with the one-time setup codes they were given and choose their own passwords. They then use **Admin → People & Logins → Create login** to issue each teammate a one-time password; everyone chooses their own password on first sign-in.
 
 ## Architecture
 

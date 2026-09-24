@@ -1,8 +1,7 @@
 "use client";
 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { useDarkMode } from "@/components/useDarkMode";
-import { CATEGORICAL_LIGHT, CATEGORICAL_DARK, chartChrome } from "@/lib/chartPalette";
+import { CATEGORICAL, chartChrome } from "@/lib/chartPalette";
 import { monthKeyLabel } from "@/lib/dates";
 
 type RotationTrendPoint = { monthKey: string; outputPct: number; totalTarget: number; totalAchieved: number } & Record<string, number | string>;
@@ -17,9 +16,8 @@ function EmptyTrend({ label }: { label: string }) {
 }
 
 export function OutputTrendChart({ data }: { data: RotationTrendPoint[] }) {
-  const dark = useDarkMode();
-  const chrome = chartChrome(dark);
-  if (data.length < 2) return <EmptyTrend label="Trend appears once at least two months of rotation cycles have data. Right now there's only one cycle on record." />;
+  const chrome = chartChrome;
+  if (data.length < 2) return <EmptyTrend label="Trend appears once the Brand × IP Matrix has at least two months of numbers. Right now there's only one month on record." />;
 
   return (
     <ResponsiveContainer width="100%" height={240}>
@@ -38,17 +36,16 @@ export function OutputTrendChart({ data }: { data: RotationTrendPoint[] }) {
           labelFormatter={(v) => monthKeyLabel(String(v))}
           formatter={(value) => [`${value}%`, "Output vs. target"]}
         />
-        <Line type="monotone" dataKey="outputPct" stroke={chrome.seriesBlue} strokeWidth={2} dot={{ r: 3 }} name="Output vs. target" />
+        <Line type="monotone" dataKey="outputPct" stroke={chrome.pink} strokeWidth={2} dot={{ r: 3 }} name="Output vs. target" />
       </LineChart>
     </ResponsiveContainer>
   );
 }
 
 export function CohortCompletionTrendChart({ data, cohortCodes }: { data: RotationTrendPoint[]; cohortCodes: string[] }) {
-  const dark = useDarkMode();
-  const chrome = chartChrome(dark);
-  const palette = dark ? CATEGORICAL_DARK : CATEGORICAL_LIGHT;
-  if (data.length < 2) return <EmptyTrend label="Per-cohort trend appears once at least two months of rotation cycles have data." />;
+  const chrome = chartChrome;
+  const palette = CATEGORICAL;
+  if (data.length < 2) return <EmptyTrend label="Per-cohort trend appears once the matrix has at least two months of numbers." />;
 
   return (
     <ResponsiveContainer width="100%" height={280}>
@@ -84,9 +81,8 @@ export function CohortCompletionTrendChart({ data, cohortCodes }: { data: Rotati
 }
 
 export function AttendanceTrendChart({ data }: { data: AttendanceTrendPoint[] }) {
-  const dark = useDarkMode();
-  const chrome = chartChrome(dark);
-  if (data.length < 2) return <EmptyTrend label="Attendance trend appears once absences are logged across at least two calendar months." />;
+  const chrome = chartChrome;
+  if (data.length < 2) return <EmptyTrend label="Attendance trend appears once people have clocked in across at least two months." />;
 
   return (
     <ResponsiveContainer width="100%" height={240}>
@@ -105,7 +101,7 @@ export function AttendanceTrendChart({ data }: { data: AttendanceTrendPoint[] })
           labelFormatter={(v) => monthKeyLabel(String(v))}
           formatter={(value) => [`${value}%`, "Absence rate"]}
         />
-        <Line type="monotone" dataKey="absenceRatePct" stroke={chrome.seriesOrange} strokeWidth={2} dot={{ r: 3 }} name="Absence rate" />
+        <Line type="monotone" dataKey="absenceRatePct" stroke={chrome.blue} strokeWidth={2} dot={{ r: 3 }} name="Absence rate" />
       </LineChart>
     </ResponsiveContainer>
   );
