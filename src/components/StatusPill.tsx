@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import type { StatusState } from "@/generated/prisma/enums";
+import type { ActionResult } from "@/lib/actions";
 
 const STYLE: Record<StatusState, { bg: string; fg: string; label: string; short: string }> = {
   PENDING: { bg: "var(--gridline)", fg: "var(--text-secondary)", label: "Pending", short: "—" },
@@ -15,7 +16,7 @@ export function StatusPill({
   size = "md",
 }: {
   status: StatusState;
-  onCycle: () => Promise<void>;
+  onCycle: () => Promise<ActionResult>;
   size?: "sm" | "md";
 }) {
   const [pending, startTransition] = useTransition();
@@ -25,7 +26,12 @@ export function StatusPill({
     <button
       type="button"
       disabled={pending}
-      onClick={() => startTransition(() => onCycle())}
+      onClick={() =>
+        startTransition(async () => {
+          const r = await onCycle();
+          if (!r.ok) alert(r.error);
+        })
+      }
       className="inline-flex items-center justify-center rounded-md font-bold border border-transparent transition-opacity"
       style={{
         background: s.bg,

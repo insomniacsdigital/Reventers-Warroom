@@ -59,7 +59,7 @@ export function KpiTile({ label, value, meta }: { label: string; value: React.Re
   );
 }
 
-export function ProgressBar({ pct, color = "var(--series-1)" }: { pct: number; color?: string }) {
+export function ProgressBar({ pct, color = "var(--brand-ink)" }: { pct: number; color?: string }) {
   const clamped = Math.max(0, Math.min(100, pct));
   return (
     <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--gridline)" }}>
@@ -81,3 +81,51 @@ export function Pill({ children, tone = "muted" }: { children: React.ReactNode; 
     </span>
   );
 }
+
+export function Th({ children, align = "left", className = "" }: { children?: React.ReactNode; align?: "left" | "right" | "center"; className?: string }) {
+  return (
+    <th
+      className={`px-3 py-2 border-b text-[9px] uppercase tracking-wide font-bold whitespace-nowrap ${className}`}
+      style={{ borderColor: "var(--border)", color: "var(--text-muted)", background: "var(--surface-tint)", textAlign: align }}
+    >
+      {children}
+    </th>
+  );
+}
+
+export function Td({
+  children,
+  align = "left",
+  className = "",
+  style,
+}: {
+  children?: React.ReactNode;
+  align?: "left" | "right" | "center";
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <td className={`px-3 py-2 border-b text-[11.5px] ${className}`} style={{ borderColor: "var(--border)", textAlign: align, ...style }}>
+      {children}
+    </td>
+  );
+}
+
+export function EmptyNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-[11px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
+      {children}
+    </div>
+  );
+}
+
+export const inputStyle: React.CSSProperties = {
+  borderColor: "var(--border)",
+  background: "var(--surface-1)",
+  color: "var(--text-primary)",
+};
+
+export const primaryButtonStyle: React.CSSProperties = {
+  background: "var(--brand-ink)",
+  color: "#fff",
+};

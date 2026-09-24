@@ -1,121 +1,126 @@
 import { prisma } from "@/lib/prisma";
-import { PersonRole, StatusState } from "@/generated/prisma/enums";
-import { WEEKS, type WeekKey } from "@/lib/dates";
+import { PersonRole, StatusState, type FestiveFormat } from "@/generated/prisma/enums";
+import { WEEKS, currentMonthKey, type WeekKey } from "@/lib/dates";
 import { getOrCreateCycle, statusValue, effectiveAssignment } from "@/lib/rotation";
+import { summarize } from "@/lib/attendance";
+
+/** Brands that count in a given month (not archived before it). */
+function activeIn(monthKey: string) {
+  return { OR: [{ archivedMonthKey: null }, { archivedMonthKey: { gt: monthKey } }] };
+}
 
 export async function getKpis() {
-  const [cohorts, clients, ips, ipcsPeople, designerPeople, editorPeople] = await Promise.all([
+  const monthKey = currentMonthKey();
+  const [cohorts, brands, ips, people] = await Promise.all([
     prisma.cohort.count(),
-    prisma.client.count(),
+    prisma.brand.count({ where: activeIn(monthKey) }),
     prisma.ip.count(),
-    prisma.personAssignment.findMany({ where: { role: PersonRole.IP_CS }, select: { personId: true }, distinct: ["personId"] }),
-    prisma.personAssignment.findMany({ where: { role: PersonRole.DESIGNER }, select: { personId: true }, distinct: ["personId"] }),
-    prisma.personAssignment.findMany({ where: { role: PersonRole.EDITOR }, select: { personId: true }, distinct: ["personId"] }),
+    prisma.person.findMany({ where: { active: true }, select: { appRole: true } }),
   ]);
+  const count = (role: string) => people.filter((p) => p.appRole === role).length;
   return {
     cohorts,
-    clients,
+    brands,
     ips,
-    ipcs: ipcsPeople.length,
-    designers: designerPeople.length,
-    editors: editorPeople.length,
+    ipcs: count("IP_CS"),
+    designers: count("DESIGNER"),
+    editors: count("EDITOR"),
+    floaters: count("FLOATER"),
   };
 }
 
-export async function getCohorts() {
-  return prisma.cohort.findMany({ orderBy: { code: "asc" }, include: { clients: true } });
+export async function getCohorts(monthKey = currentMonthKey()) {
+  return prisma.cohort.findMany({
+    orderBy: { code: "asc" },
+    include: { brands: { where: activeIn(monthKey), orderBy: { name: "asc" } }, leader: true },
+  });
 }
 
-export async function getCohortOverview() {
-  const cohorts = await getCohorts();
-  const ipCount = await prisma.ip.count();
-  const statuses = await prisma.clientIpStatus.findMany({
-    include: { client: true },
-  });
+/** "C1 · Aasawari" */
+export function cohortLabel(c: { code: string; leaderName: string }) {
+  return `${c.code} · ${c.leaderName}`;
+}
+
+/** Each cohort's IP delivery for the month, from the Brand × IP matrix. */
+export async function getCohortOverview(monthKey: string) {
+  const [cohorts, cells] = await Promise.all([
+    getCohorts(monthKey),
+    prisma.brandIpMonth.findMany({ where: { monthKey }, select: { brandId: true, target: true, achieved: true, live: true } }),
+  ]);
   return cohorts.map((cohort) => {
-    const clientIds = new Set(cohort.clients.map((c) => c.id));
-    const relevant = statuses.filter((s) => clientIds.has(s.clientId));
-    const total = cohort.clients.length * ipCount;
-    const done = relevant.filter((s) => s.status === StatusState.DONE).length;
-    const pct = total ? Math.round((done / total) * 100) : 0;
+    const brandIds = new Set(cohort.brands.map((b) => b.id));
+    const mine = cells.filter((c) => brandIds.has(c.brandId));
+    const target = mine.reduce((s, c) => s + c.target, 0);
+    const achieved = mine.reduce((s, c) => s + c.achieved, 0);
+    const live = mine.reduce((s, c) => s + c.live, 0);
     return {
       id: cohort.id,
       code: cohort.code,
       leaderName: cohort.leaderName,
-      clientCount: cohort.clients.length,
-      done,
-      total,
-      pct,
+      brandCount: cohort.brands.length,
+      target,
+      achieved,
+      live,
+      pct: target ? Math.min(100, Math.round((achieved / target) * 100)) : 0,
     };
   });
 }
 
-export async function getIpsWithRoster() {
+/** Every IP with who handles it. */
+export async function getIpTeams() {
   const ips = await prisma.ip.findMany({
-    orderBy: { name: "asc" },
-    include: { assignments: { include: { person: true } } },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    include: { assignments: { include: { person: true }, orderBy: { person: { name: "asc" } } } },
   });
-  return ips.map((ip) => ({
-    id: ip.id,
-    name: ip.name,
-    defaultWeeklyTarget: ip.defaultWeeklyTarget,
-    ipcs: ip.assignments.find((a) => a.role === PersonRole.IP_CS)?.person.name ?? "—",
-    designer: ip.assignments.find((a) => a.role === PersonRole.DESIGNER)?.person.name ?? "—",
-    editors: ip.assignments.filter((a) => a.role === PersonRole.EDITOR).map((a) => a.person.name),
-  }));
+  return ips.map((ip) => {
+    const names = (role: PersonRole) => ip.assignments.filter((a) => a.role === role).map((a) => a.person.name);
+    return {
+      id: ip.id,
+      name: ip.name,
+      weeklyTarget: ip.defaultWeeklyTarget,
+      ipcs: names(PersonRole.IP_CS),
+      designers: names(PersonRole.DESIGNER),
+      editors: names(PersonRole.EDITOR),
+      personIds: Array.from(new Set(ip.assignments.map((a) => a.personId))),
+    };
+  });
 }
 
-export async function getIpcsGroups() {
-  const ips = await getIpsWithRoster();
-  const byIpcs = new Map<string, string[]>();
-  for (const ip of ips) {
-    if (!byIpcs.has(ip.ipcs)) byIpcs.set(ip.ipcs, []);
-    byIpcs.get(ip.ipcs)!.push(ip.name);
-  }
-  return Array.from(byIpcs.entries()).map(([ipcs, ipNames]) => ({ ipcs, ipNames }));
-}
-
-export async function getClientMatrix() {
-  const cohorts = await prisma.cohort.findMany({
-    orderBy: { code: "asc" },
-    include: {
-      clients: {
-        orderBy: { name: "asc" },
-        include: { statuses: true },
-      },
-    },
-  });
-  const ips = await prisma.ip.findMany({ orderBy: { name: "asc" } });
-  return { cohorts, ips };
+export async function getMatrix(monthKey: string) {
+  const [cohorts, ips, cells] = await Promise.all([
+    getCohorts(monthKey),
+    prisma.ip.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
+    prisma.brandIpMonth.findMany({ where: { monthKey } }),
+  ]);
+  const cellMap = new Map(cells.map((c) => [`${c.brandId}:${c.ipId}`, c]));
+  return { cohorts, ips, cellMap };
 }
 
 export async function getRotationView(monthKey: string) {
   await getOrCreateCycle(monthKey);
-  const cycle = await prisma.rotationCycle.findUniqueOrThrow({
-    where: { monthKey },
-    include: {
-      entries: {
-        include: { ip: true, assignments: { include: { cohort: true } } },
-      },
-      trades: true,
-    },
-  });
-  const ips = await prisma.ip.findMany({ orderBy: { name: "asc" } });
-  const cohorts = await prisma.cohort.findMany({ orderBy: { code: "asc" } });
+  const [cycle, teams, cohorts, ipMonth] = await Promise.all([
+    prisma.rotationCycle.findUniqueOrThrow({
+      where: { monthKey },
+      include: { entries: { include: { assignments: true } }, trades: true },
+    }),
+    getIpTeams(),
+    prisma.cohort.findMany({ orderBy: { code: "asc" } }),
+    prisma.brandIpMonth.groupBy({ by: ["ipId"], where: { monthKey }, _sum: { achieved: true, live: true } }),
+  ]);
 
-  const rows = ips.map((ip) => {
-    const byWeek: Record<WeekKey, { target: number; achieved: number; assignedCohortCodes: string[]; tradeCount: number }> =
-      {} as Record<WeekKey, { target: number; achieved: number; assignedCohortCodes: string[]; tradeCount: number }>;
+  const rows = teams.map((team) => {
+    const byWeek = {} as Record<WeekKey, { target: number; cohortIds: string[]; tradeCount: number }>;
     for (const week of WEEKS) {
-      const entry = cycle.entries.find((e) => e.ipId === ip.id && e.week === week);
+      const entry = cycle.entries.find((e) => e.ipId === team.id && e.week === week);
       byWeek[week] = {
-        target: entry?.target ?? ip.defaultWeeklyTarget,
-        achieved: entry?.achieved ?? 0,
-        assignedCohortCodes: entry?.assignments.map((a) => a.cohort.code) ?? [],
-        tradeCount: cycle.trades.filter((t) => t.ipId === ip.id && t.week === week).length,
+        target: entry?.target ?? team.weeklyTarget,
+        cohortIds: entry?.assignments.map((a) => a.cohortId) ?? [],
+        tradeCount: cycle.trades.filter((t) => t.ipId === team.id && t.week === week).length,
       };
     }
-    return { ip, byWeek };
+    const monthTarget = WEEKS.reduce((s, w) => s + byWeek[w].target, 0);
+    const sums = ipMonth.find((m) => m.ipId === team.id)?._sum;
+    return { team, byWeek, monthTarget, achieved: sums?.achieved ?? 0, live: sums?.live ?? 0 };
   });
 
   return { cycle, rows, cohorts };
@@ -157,15 +162,17 @@ export async function getCohortWeeklyView(monthKey: string, cohortId: string, we
     ),
   );
 
-  return assignedEntries.map((entry) => {
-    const status = cohortStatuses.find((s) => s.ipId === entry.ipId)?.status ?? StatusState.PENDING;
-    return {
-      ipId: entry.ipId,
-      ipName: entry.ip.name,
-      target: entry.target,
-      status,
-    };
-  });
+  return assignedEntries
+    .sort((a, b) => a.ip.sortOrder - b.ip.sortOrder)
+    .map((entry) => {
+      const status = cohortStatuses.find((s) => s.ipId === entry.ipId)?.status ?? StatusState.PENDING;
+      return {
+        ipId: entry.ipId,
+        ipName: entry.ip.name,
+        target: entry.target,
+        status,
+      };
+    });
 }
 
 export async function getCohortMonthlySummary(monthKey: string) {
@@ -201,108 +208,142 @@ export async function getCohortMonthlySummary(monthKey: string) {
   });
 }
 
-export async function buildRoster() {
-  const assignments = await prisma.personAssignment.findMany({
-    include: { person: true, ip: true },
-    orderBy: [{ ip: { name: "asc" } }, { role: "asc" }],
-  });
-  return assignments.map((a) => ({
-    ipName: a.ip.name,
-    role: a.role,
-    personId: a.personId,
-    personName: a.person.name,
-  }));
-}
+/* ---------------- FESTIVE & NON-IP ---------------- */
 
-export async function getAttendanceView(dateStr: string) {
-  const roster = await buildRoster();
-  const monthPrefix = dateStr.slice(0, 7);
-  const uniquePersonIds = Array.from(new Set(roster.map((r) => r.personId)));
-
-  const records = await prisma.attendanceRecord.findMany({
-    where: { personId: { in: uniquePersonIds } },
-  });
-
-  const dayKey = (d: Date) => d.toISOString().slice(0, 10);
-
-  return roster.map((r) => {
-    const todays = records.find((rec) => rec.personId === r.personId && dayKey(rec.date) === dateStr);
-    const absences = records.filter(
-      (rec) => rec.personId === r.personId && dayKey(rec.date).startsWith(monthPrefix) && rec.status === "ABSENT",
-    ).length;
-    return {
-      ...r,
-      status: todays?.status ?? null,
-      absencesThisMonth: absences,
-    };
+export async function getFestivals(includeInactive = false) {
+  return prisma.festival.findMany({
+    where: includeInactive ? {} : { active: true },
+    orderBy: [{ month: "asc" }, { sortOrder: "asc" }],
   });
 }
 
-export async function getTrendsData() {
-  const cycles = await prisma.rotationCycle.findMany({
-    orderBy: { monthKey: "asc" },
-    include: {
-      entries: { include: { assignments: true } },
-      trades: true,
-    },
-  });
-  const cohorts = await prisma.cohort.findMany({ orderBy: { code: "asc" } });
+export async function getFestiveView(monthKey: string) {
+  const [cohorts, festivals, festive, nonIp] = await Promise.all([
+    getCohorts(monthKey),
+    getFestivals(),
+    prisma.festiveEntry.findMany({ where: { monthKey }, include: { festival: true } }),
+    prisma.nonIpEntry.findMany({ where: { monthKey } }),
+  ]);
 
-  const rotationTrend = await Promise.all(
-    cycles.map(async (cycle) => {
-      const totalTarget = cycle.entries.reduce((sum, e) => sum + e.target, 0);
-      const totalAchieved = cycle.entries.reduce((sum, e) => sum + e.achieved, 0);
+  // Group festive rows as brand + festival, with one cell per format.
+  type Cell = { target: number; achieved: number; live: number };
+  const groups = new Map<string, { brandId: string; festivalId: string; festivalName: string; dateLabel: string; month: number; formats: Partial<Record<FestiveFormat, Cell>> }>();
+  for (const e of festive) {
+    const key = `${e.brandId}:${e.festivalId}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        brandId: e.brandId,
+        festivalId: e.festivalId,
+        festivalName: e.festival.name,
+        dateLabel: e.festival.dateLabel,
+        month: e.festival.month,
+        formats: {},
+      });
+    }
+    groups.get(key)!.formats[e.format] = { target: e.target, achieved: e.achieved, live: e.live };
+  }
 
-      const cohortStatuses = await prisma.cohortWeeklyStatus.findMany({ where: { cycleId: cycle.id } });
-      const perCohort: Record<string, number> = {};
-      for (const cohort of cohorts) {
-        let target = 0;
-        let achieved = 0;
-        for (const entry of cycle.entries) {
-          const assigned = effectiveAssignment(
-            entry.ipId,
-            entry.week as WeekKey,
-            cohort.id,
-            entry.assignments.map((a) => a.cohortId),
-            cycle.trades,
-          );
-          if (!assigned) continue;
-          target += 1;
-          const status = cohortStatuses.find(
-            (s) => s.ipId === entry.ipId && s.week === entry.week && s.cohortId === cohort.id,
-          )?.status;
-          achieved += status ? statusValue(status) : 0;
-        }
-        perCohort[cohort.code] = target ? Math.round((achieved / target) * 100) : 0;
-      }
-
-      return {
-        monthKey: cycle.monthKey,
-        outputPct: totalTarget ? Math.round((totalAchieved / totalTarget) * 100) : 0,
-        totalTarget,
-        totalAchieved,
-        ...perCohort,
-      };
-    }),
+  const byFormat = { STATIC: { target: 0, achieved: 0, live: 0 }, STORY: { target: 0, achieved: 0, live: 0 }, REEL: { target: 0, achieved: 0, live: 0 } };
+  const byFestival = new Map<string, { name: string; dateLabel: string; STATIC: number; STORY: number; REEL: number }>();
+  for (const e of festive) {
+    byFormat[e.format].target += e.target;
+    byFormat[e.format].achieved += e.achieved;
+    byFormat[e.format].live += e.live;
+    if (!byFestival.has(e.festivalId)) byFestival.set(e.festivalId, { name: e.festival.name, dateLabel: e.festival.dateLabel, STATIC: 0, STORY: 0, REEL: 0 });
+    byFestival.get(e.festivalId)![e.format] += e.target;
+  }
+  const nonIpTotal = nonIp.reduce(
+    (s, n) => ({ target: s.target + n.target, achieved: s.achieved + n.achieved, live: s.live + n.live }),
+    { target: 0, achieved: 0, live: 0 },
   );
 
-  const attendanceRecords = await prisma.attendanceRecord.findMany();
-  const byMonth = new Map<string, { present: number; absent: number }>();
-  for (const rec of attendanceRecords) {
-    const monthKey = rec.date.toISOString().slice(0, 7);
-    if (!byMonth.has(monthKey)) byMonth.set(monthKey, { present: 0, absent: 0 });
-    const bucket = byMonth.get(monthKey)!;
-    if (rec.status === "PRESENT") bucket.present += 1;
-    else bucket.absent += 1;
-  }
-  const attendanceTrend = Array.from(byMonth.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([monthKey, { present, absent }]) => ({
+  return {
+    cohorts,
+    festivals,
+    festiveGroups: Array.from(groups.values()),
+    nonIpByBrand: new Map(nonIp.map((n) => [n.brandId, n])),
+    byFormat,
+    byFestival: Array.from(byFestival.values()),
+    nonIpTotal,
+  };
+}
+
+/* ---------------- ATTENDANCE ---------------- */
+
+export async function getMyAttendance(personId: string, monthKey: string) {
+  const days = await prisma.attendanceDay.findMany({
+    where: { personId, day: { startsWith: monthKey } },
+    orderBy: { day: "desc" },
+  });
+  return { days, summary: summarize(monthKey, days) };
+}
+
+export async function getOpenDay(personId: string) {
+  return prisma.attendanceDay.findFirst({ where: { personId, clockOut: null }, orderBy: { day: "desc" } });
+}
+
+/** Everyone except admins, with their month summary (admin view). */
+export async function getAttendanceOverview(monthKey: string) {
+  const [people, days] = await Promise.all([
+    prisma.person.findMany({ where: { active: true, appRole: { not: "ADMIN" } }, orderBy: [{ appRole: "asc" }, { name: "asc" }] }),
+    prisma.attendanceDay.findMany({ where: { day: { startsWith: monthKey } } }),
+  ]);
+  return people.map((p) => ({ person: p, summary: summarize(monthKey, days.filter((d) => d.personId === p.id)) }));
+}
+
+/** Each IP team's average absence rate for the month (IP CS + designers + editors). */
+export async function getIpAbsenteeism(monthKey: string) {
+  const [teams, overview] = await Promise.all([getIpTeams(), getAttendanceOverview(monthKey)]);
+  const rateById = new Map(overview.map((o) => [o.person.id, o.summary]));
+  return teams
+    .map((t) => {
+      const members = t.personIds.map((id) => rateById.get(id)).filter((s): s is NonNullable<typeof s> => Boolean(s));
+      const avg = members.length ? Math.round(members.reduce((s, m) => s + m.absenceRate, 0) / members.length) : 0;
+      const absentDays = members.reduce((s, m) => s + m.absent, 0);
+      return { ip: t, teamSize: members.length, absenceRate: avg, absentDays };
+    })
+    .sort((a, b) => b.absenceRate - a.absenceRate || b.absentDays - a.absentDays);
+}
+
+/* ---------------- TRENDS ---------------- */
+
+/** Month-by-month IP output vs. matrix target, per-cohort completion, and absence rate. */
+export async function getTrendsData() {
+  const [cells, cohorts, attendance, people] = await Promise.all([
+    prisma.brandIpMonth.findMany({ include: { brand: { select: { cohortId: true } } } }),
+    prisma.cohort.findMany({ orderBy: { code: "asc" } }),
+    prisma.attendanceDay.findMany(),
+    prisma.person.findMany({ where: { active: true, appRole: { not: "ADMIN" } }, select: { id: true } }),
+  ]);
+
+  const monthKeys = Array.from(new Set(cells.map((c) => c.monthKey))).sort();
+  const rotationTrend = monthKeys.map((monthKey) => {
+    const month = cells.filter((c) => c.monthKey === monthKey);
+    const totalTarget = month.reduce((s, c) => s + c.target, 0);
+    const totalAchieved = month.reduce((s, c) => s + c.achieved, 0);
+    const perCohort: Record<string, number> = {};
+    for (const cohort of cohorts) {
+      const mine = month.filter((c) => c.brand.cohortId === cohort.id);
+      const t = mine.reduce((s, c) => s + c.target, 0);
+      const a = mine.reduce((s, c) => s + c.achieved, 0);
+      perCohort[cohort.code] = t ? Math.min(100, Math.round((a / t) * 100)) : 0;
+    }
+    return {
       monthKey,
-      absenceRatePct: present + absent ? Math.round((absent / (present + absent)) * 100) : 0,
-      present,
-      absent,
-    }));
+      outputPct: totalTarget ? Math.round((totalAchieved / totalTarget) * 100) : 0,
+      totalTarget,
+      totalAchieved,
+      ...perCohort,
+    };
+  });
+
+  const attendanceMonths = Array.from(new Set(attendance.map((d) => d.day.slice(0, 7)))).sort();
+  const attendanceTrend = attendanceMonths.map((monthKey) => {
+    const month = attendance.filter((d) => d.day.startsWith(monthKey));
+    const rates = people.map((p) => summarize(monthKey, month.filter((d) => d.personId === p.id)).absenceRate);
+    const absenceRatePct = rates.length ? Math.round(rates.reduce((s, r) => s + r, 0) / rates.length) : 0;
+    return { monthKey, absenceRatePct, present: 0, absent: 0 };
+  });
 
   return { rotationTrend, attendanceTrend, cohortCodes: cohorts.map((c) => c.code) };
 }
