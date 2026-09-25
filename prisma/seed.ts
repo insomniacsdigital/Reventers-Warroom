@@ -43,6 +43,10 @@ const prisma = new PrismaClient({ adapter });
 
 const WEEKS = ["W1", "W2", "W3", "W4"] as const;
 
+/** The admins' chosen passwords (scrypt hashes). */
+const ISHIKA_PASSWORD_HASH = "scrypt$6JUy5_1jha5DI6-DUV9XYw$lkmP7_cL-gQufU7KTR1zvlpBHHlBgsMUJxECX8rP8ISMQvOwPifdicn4QvD4A23iKjY6SOMM-jTl1hhqu2oN8w";
+const UNNATI_PASSWORD_HASH = "scrypt$2AvLUaCHtJ8__k6uKJ3OpQ$W8JylPnZH3jUHoH9bUePBdj29twNbHbOZD777JHCtohIqHHqjcXCthhN0g_cX1GwEMNu7p2aFvPHpbU1tNU4CA";
+
 function currentMonthKey(): string {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit" }).formatToParts(new Date());
   const get = (t: string) => parts.find((p) => p.type === t)!.value;
@@ -57,8 +61,38 @@ async function main() {
   const marker = await prisma.appSetting.findUnique({ where: { key: "seed.version" } });
   if (marker) {
     console.log(`Launch data already loaded (seed v${marker.value}); nothing to do.`);
-    return;
+  } else {
+    await loadLaunchData();
   }
+  await applyAccountSetup();
+}
+
+/**
+ * One-time admin logins requested by the admins. Runs once (tracked by its
+ * own marker), so a password changed later in the app is never undone.
+ */
+const ADMIN_LOGINS = [
+  { name: "Ishika", email: "ishika@insomniacs.in", passwordHash: ISHIKA_PASSWORD_HASH },
+  { name: "Unnati", email: "unatti@insomniacs.in", passwordHash: UNNATI_PASSWORD_HASH },
+];
+
+async function applyAccountSetup() {
+  const key = "setup.admin-logins.v1";
+  if (await prisma.appSetting.findUnique({ where: { key } })) return;
+  for (const a of ADMIN_LOGINS) {
+    const person = await prisma.person.findUnique({ where: { name: a.name } });
+    if (!person) throw new Error(`Admin ${a.name} not found`);
+    await prisma.person.update({
+      where: { id: person.id },
+      data: { email: a.email, passwordHash: a.passwordHash, mustChangePassword: false, active: true, appRole: "ADMIN" },
+    });
+    await prisma.session.deleteMany({ where: { personId: person.id } });
+  }
+  await prisma.appSetting.create({ data: { key, value: new Date().toISOString() } });
+  console.log("Admin logins set up.");
+}
+
+async function loadLaunchData() {
 
   console.log("Loading settings...");
   for (const [key, value] of [
