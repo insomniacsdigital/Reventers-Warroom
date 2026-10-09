@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import type { StatusState } from "@/generated/prisma/enums";
+import type { StatusState } from "@/lib/enums";
 import type { ActionResult } from "@/lib/actions";
 
 const STYLE: Record<StatusState, { bg: string; fg: string; label: string; short: string }> = {

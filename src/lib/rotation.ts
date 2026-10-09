@@ -1,49 +1,51 @@
-import { prisma } from "@/lib/prisma";
+import { db, isDuplicateKey, newId } from "@/lib/db";
 import { WEEKS, type WeekKey } from "@/lib/dates";
-import { StatusState } from "@/generated/prisma/enums";
+import { StatusState } from "@/lib/enums";
+import type { RotationCycle } from "@/lib/models";
 
 /**
  * A month's rotation cycle. New months repeat the most recent month's
  * W1–W4 cohort pattern (the schedule is the same every month), with each
  * IP's current weekly target.
  */
-export async function getOrCreateCycle(monthKey: string) {
-  const existing = await prisma.rotationCycle.findUnique({ where: { monthKey } });
+export async function getOrCreateCycle(monthKey: string): Promise<RotationCycle> {
+  const existing = await db.rotationCycles.findOne({ monthKey });
   if (existing) return existing;
 
   const [ips, previous] = await Promise.all([
-    prisma.ip.findMany(),
-    prisma.rotationCycle.findFirst({
-      where: { monthKey: { lt: monthKey } },
-      orderBy: { monthKey: "desc" },
-      include: { entries: { include: { assignments: true } } },
-    }),
+    db.ips.find(),
+    db.rotationCycles.findOne({ monthKey: { $lt: monthKey } }, { sort: { monthKey: -1 } }),
   ]);
+  const priorEntries = previous ? await db.rotationEntries.find({ cycleId: previous.id }) : [];
+  const priorAssignments = priorEntries.length
+    ? await db.rotationAssignments.find({ entryId: { $in: priorEntries.map((e) => e.id) } })
+    : [];
 
+  // The cycle document is written last, so anyone who can see the cycle also sees its entries.
+  const cycleId = newId();
+  const entries = ips.flatMap((ip) =>
+    WEEKS.map((week) => ({ id: newId(), cycleId, ipId: ip.id, week, target: ip.defaultWeeklyTarget, achieved: 0 })),
+  );
+  const assignments = entries.flatMap((entry) => {
+    const prior = priorEntries.find((e) => e.ipId === entry.ipId && e.week === entry.week);
+    return priorAssignments.filter((a) => a.entryId === prior?.id).map((a) => ({ entryId: entry.id, cohortId: a.cohortId }));
+  });
+
+  await db.rotationEntries.createMany(
+    entries.map((e) => ({ cycleId: e.cycleId, ipId: e.ipId, week: e.week, target: e.target, achieved: e.achieved })),
+    entries.map((e) => e.id),
+  );
+  await db.rotationAssignments.createMany(assignments);
   try {
-    return await prisma.rotationCycle.create({
-      data: {
-        monthKey,
-        entries: {
-          create: ips.flatMap((ip) =>
-            WEEKS.map((week) => {
-              const prior = previous?.entries.find((e) => e.ipId === ip.id && e.week === week);
-              return {
-                ipId: ip.id,
-                week,
-                target: ip.defaultWeeklyTarget,
-                achieved: 0,
-                assignments: { create: (prior?.assignments ?? []).map((a) => ({ cohortId: a.cohortId })) },
-              };
-            }),
-          ),
-        },
-      },
-    });
+    return await db.rotationCycles.create({ monthKey }, cycleId);
   } catch (e) {
-    // Two requests created the same month at once; use the one that won.
-    const raced = await prisma.rotationCycle.findUnique({ where: { monthKey } });
-    if (raced) return raced;
+    // Two requests created the same month at once; drop our copy and use the one that won.
+    await Promise.all([
+      db.rotationAssignments.deleteMany({ entryId: { $in: entries.map((x) => x.id) } }),
+      db.rotationEntries.deleteMany({ cycleId }),
+    ]);
+    const raced = await db.rotationCycles.findOne({ monthKey });
+    if (raced && isDuplicateKey(e)) return raced;
     throw e;
   }
 }

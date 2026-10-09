@@ -2,8 +2,8 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createHash, randomBytes } from "node:crypto";
-import { prisma } from "@/lib/prisma";
-import type { AppRole } from "@/generated/prisma/enums";
+import { db } from "@/lib/db";
+import type { AppRole } from "@/lib/enums";
 
 const COOKIE = "wr_session";
 const SESSION_DAYS = 30;
@@ -27,7 +27,7 @@ function hashToken(token: string) {
 export async function createSession(personId: string) {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400_000);
-  await prisma.session.create({ data: { tokenHash: hashToken(token), personId, expiresAt } });
+  await db.sessions.create({ tokenHash: hashToken(token), personId, expiresAt });
   const jar = await cookies();
   jar.set(COOKIE, token, {
     httpOnly: true,
@@ -41,7 +41,7 @@ export async function createSession(personId: string) {
 export async function destroySession() {
   const jar = await cookies();
   const token = jar.get(COOKIE)?.value;
-  if (token) await prisma.session.deleteMany({ where: { tokenHash: hashToken(token) } });
+  if (token) await db.sessions.deleteMany({ tokenHash: hashToken(token) });
   jar.delete(COOKIE);
 }
 
@@ -50,27 +50,22 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const jar = await cookies();
   const token = jar.get(COOKIE)?.value;
   if (!token) return null;
-  const session = await prisma.session.findUnique({
-    where: { tokenHash: hashToken(token) },
-    include: {
-      person: {
-        include: {
-          leadsCohorts: { select: { id: true } },
-          assignments: { where: { role: "IP_CS" }, select: { ipId: true } },
-        },
-      },
-    },
-  });
-  if (!session || session.expiresAt < new Date() || !session.person.active) return null;
-  const p = session.person;
+  const session = await db.sessions.findOne({ tokenHash: hashToken(token) });
+  if (!session || session.expiresAt < new Date()) return null;
+  const [p, leadsCohorts, assignments] = await Promise.all([
+    db.people.get(session.personId),
+    db.cohorts.find({ leaderPersonId: session.personId }),
+    db.personAssignments.find({ personId: session.personId, role: "IP_CS" }),
+  ]);
+  if (!p || !p.active) return null;
   return {
     id: p.id,
     name: p.name,
     appRole: p.appRole,
     isAdmin: p.appRole === "ADMIN",
     mustChangePassword: p.mustChangePassword,
-    cohortIds: p.leadsCohorts.map((c) => c.id),
-    ipcsIpIds: p.assignments.map((a) => a.ipId),
+    cohortIds: leadsCohorts.map((c) => c.id),
+    ipcsIpIds: assignments.map((a) => a.ipId),
   };
 });
 

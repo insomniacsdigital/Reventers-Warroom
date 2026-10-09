@@ -5,8 +5,7 @@ import { MonthSwitcher } from "@/components/Switchers";
 import { AdminDayForm } from "@/components/AttendanceControls";
 import { HoursChart } from "@/components/AttendanceChart";
 import { AbsenceBadge } from "@/components/AbsenceBadge";
-import { prisma } from "@/lib/prisma";
-import { getMyAttendance } from "@/lib/queries";
+import { getMyAttendance, getPerson } from "@/lib/queries";
 import { requireAdminPage, ROLE_LABEL } from "@/lib/auth";
 import { dayStatus, hoursWorked, type DayStatus } from "@/lib/attendance";
 import { currentMonthKey, daysInMonth, monthKeyLabel, timeLabel, todayDateStr, yearMonths, yearStartFor } from "@/lib/dates";
@@ -31,7 +30,7 @@ export default async function PersonAttendancePage({
   const { month } = await searchParams;
   const now = currentMonthKey();
   const monthKey = month && /^\d{4}-\d{2}$/.test(month) ? month : now;
-  const person = await prisma.person.findUnique({ where: { id: personId } });
+  const person = await getPerson(personId);
   if (!person) notFound();
 
   const { days, summary } = await getMyAttendance(person.id, monthKey);

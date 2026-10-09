@@ -16,9 +16,8 @@ import {
   PersonRow,
   TargetSettingsForm,
 } from "@/components/AdminControls";
-import { prisma } from "@/lib/prisma";
 import { requireAdminPage, ROLE_LABEL } from "@/lib/auth";
-import { getFestivals } from "@/lib/queries";
+import { getCohortsWithAllBrands, getFestivals, getIpsWithAssignments, getMonthSettings, getPeople } from "@/lib/queries";
 import { getYearSummary } from "@/lib/targets";
 import { currentMonthKey, monthKeyLabel, yearLabel, yearStartFor } from "@/lib/dates";
 
@@ -69,7 +68,7 @@ async function TargetsTab({ year }: { year?: string }) {
   const thisYear = yearStartFor(currentMonthKey());
   const requested = Number(year);
   const startYear = Number.isInteger(requested) && requested > 2000 && requested < 2100 ? requested : thisYear;
-  const [summary, settings] = await Promise.all([getYearSummary(startYear), prisma.monthSetting.findMany()]);
+  const [summary, settings] = await Promise.all([getYearSummary(startYear), getMonthSettings()]);
   const byMonth = new Map(settings.map((s) => [s.monthKey, s]));
   return (
     <>
@@ -137,8 +136,8 @@ async function TargetsTab({ year }: { year?: string }) {
 
 async function CohortsTab() {
   const [cohorts, people] = await Promise.all([
-    prisma.cohort.findMany({ orderBy: { code: "asc" }, include: { brands: { orderBy: { name: "asc" } } } }),
-    prisma.person.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
+    getCohortsWithAllBrands(),
+    getPeople({ activeOnly: true }),
   ]);
   const cohortOptions = cohorts.map((c) => ({ id: c.id, label: `${c.code} · ${c.leaderName}` }));
   const peopleOptions = people.map((p) => ({ id: p.id, label: `${p.name} (${ROLE_LABEL[p.appRole]})` }));
@@ -176,7 +175,7 @@ async function CohortsTab() {
 }
 
 async function PeopleTab() {
-  const people = await prisma.person.findMany({ orderBy: [{ appRole: "asc" }, { name: "asc" }] });
+  const people = await getPeople();
   return (
     <Card>
       <CardHead
@@ -219,11 +218,8 @@ async function PeopleTab() {
 
 async function IpsTab() {
   const [ips, people] = await Promise.all([
-    prisma.ip.findMany({
-      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      include: { assignments: { include: { person: true }, orderBy: { role: "asc" } } },
-    }),
-    prisma.person.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
+    getIpsWithAssignments(),
+    getPeople({ activeOnly: true }),
   ]);
   const options = people.map((p) => ({ id: p.id, label: p.name }));
   const ROLE = { IP_CS: "IP CS", DESIGNER: "Designer", EDITOR: "Editor" } as const;

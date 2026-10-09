@@ -4,7 +4,7 @@ import { AddFestiveForm, FestiveNumber, NonIpNumber, RemoveFestiveButton } from 
 import { getFestiveView } from "@/lib/queries";
 import { requireUser } from "@/lib/auth";
 import { currentMonthKey, monthKeyLabel, yearMonths, yearStartFor } from "@/lib/dates";
-import { FestiveFormat } from "@/generated/prisma/enums";
+import { FestiveFormat } from "@/lib/enums";
 
 const FORMATS: { key: FestiveFormat; label: string }[] = [
   { key: FestiveFormat.STATIC, label: "Statics" },

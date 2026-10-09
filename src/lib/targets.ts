@@ -1,11 +1,11 @@
-import { prisma } from "@/lib/prisma";
+import { db, sumByMonth } from "@/lib/db";
 import { currentMonthKey, yearMonths } from "@/lib/dates";
 
 export const DEFAULT_BASE = 192;
 export const DEFAULT_PER_BRAND = 4;
 
 export async function getTargetSettings() {
-  const rows = await prisma.appSetting.findMany({ where: { key: { in: ["target.baseMonthly", "target.perBrand"] } } });
+  const rows = await db.appSettings.find({ key: { $in: ["target.baseMonthly", "target.perBrand"] } });
   const get = (key: string, fallback: number) => {
     const v = Number(rows.find((r) => r.key === key)?.value);
     return Number.isFinite(v) && v >= 0 ? v : fallback;
@@ -48,23 +48,11 @@ export async function getYearSummary(startYear: number) {
 
   const [settings, brands, monthSettings, matrix, festive, nonIp] = await Promise.all([
     getTargetSettings(),
-    prisma.brand.findMany({ select: { addedMonthKey: true, archivedMonthKey: true } }),
-    prisma.monthSetting.findMany({ where: { monthKey: { gte: first, lte: last } } }),
-    prisma.brandIpMonth.groupBy({
-      by: ["monthKey"],
-      where: { monthKey: { gte: first, lte: last } },
-      _sum: { achieved: true, live: true },
-    }),
-    prisma.festiveEntry.groupBy({
-      by: ["monthKey"],
-      where: { monthKey: { gte: first, lte: last } },
-      _sum: { target: true, achieved: true, live: true },
-    }),
-    prisma.nonIpEntry.groupBy({
-      by: ["monthKey"],
-      where: { monthKey: { gte: first, lte: last } },
-      _sum: { target: true, achieved: true, live: true },
-    }),
+    db.brands.find(),
+    db.monthSettings.find({ monthKey: { $gte: first, $lte: last } }),
+    sumByMonth(db.brandIpMonths, ["achieved", "live"], first, last),
+    sumByMonth(db.festiveEntries, ["target", "achieved", "live"], first, last),
+    sumByMonth(db.nonIpEntries, ["target", "achieved", "live"], first, last),
   ]);
 
   const rows: YearRow[] = [];
@@ -77,12 +65,12 @@ export async function getYearSummary(startYear: number) {
       (b) => b.addedMonthKey && b.addedMonthKey <= monthKey && (!b.archivedMonthKey || b.archivedMonthKey > monthKey),
     ).length;
     const base = setting?.baseOverride ?? settings.baseMonthly + settings.perBrand * newBrands;
-    const m = matrix.find((x) => x.monthKey === monthKey);
-    const achieved = setting?.achievedOverride ?? m?._sum.achieved ?? 0;
+    const m = matrix.get(monthKey);
+    const achieved = setting?.achievedOverride ?? m?.achieved ?? 0;
     const backlogIn = carryKnown ? carry : null;
     const target = base + (backlogIn ?? 0);
-    const f = festive.find((x) => x.monthKey === monthKey)?._sum;
-    const n = nonIp.find((x) => x.monthKey === monthKey)?._sum;
+    const f = festive.get(monthKey);
+    const n = nonIp.get(monthKey);
 
     rows.push({
       monthKey,
@@ -97,7 +85,7 @@ export async function getYearSummary(startYear: number) {
       gap: timing === "future" ? null : target - achieved,
       festive: { target: f?.target ?? 0, achieved: f?.achieved ?? 0, live: f?.live ?? 0 },
       nonIp: { target: n?.target ?? 0, achieved: n?.achieved ?? 0, live: n?.live ?? 0 },
-      ipLive: m?._sum.live ?? 0,
+      ipLive: m?.live ?? 0,
     });
 
     // Only a finished month's shortfall is known and carried forward.

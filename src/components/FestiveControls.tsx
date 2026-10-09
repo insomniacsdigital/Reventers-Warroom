@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { EditableNumber } from "@/components/EditableNumber";
 import { addFestiveRow, removeFestiveRow, setFestiveValue, setNonIpValue } from "@/lib/actions";
 import { inputStyle, primaryButtonStyle } from "@/components/ui";
-import type { FestiveFormat } from "@/generated/prisma/enums";
+import type { FestiveFormat } from "@/lib/enums";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 

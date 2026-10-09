@@ -2,7 +2,7 @@
 
 import { EditableNumber } from "@/components/EditableNumber";
 import { setBrandIpValue } from "@/lib/actions";
-import type { StatusState } from "@/generated/prisma/enums";
+import type { StatusState } from "@/lib/enums";
 
 const TONE: Record<StatusState, string> = {
   PENDING: "transparent",

@@ -21,7 +21,7 @@ import {
   type ActionResult,
 } from "@/lib/actions";
 import { inputStyle, primaryButtonStyle } from "@/components/ui";
-import type { AppRole, PersonRole } from "@/generated/prisma/enums";
+import type { AppRole, PersonRole } from "@/lib/enums";
 
 const control = "h-8 rounded-lg border px-2 text-[11px]";
 const button = "h-8 rounded-lg px-3 text-[11px] font-semibold";

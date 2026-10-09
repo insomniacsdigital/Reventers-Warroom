@@ -2,7 +2,7 @@
 
 import { StatusPill } from "@/components/StatusPill";
 import { cycleCohortWeeklyStatus } from "@/lib/actions";
-import type { StatusState } from "@/generated/prisma/enums";
+import type { StatusState } from "@/lib/enums";
 import type { WeekKey } from "@/lib/dates";
 
 export function CohortWeeklyStatusPill({

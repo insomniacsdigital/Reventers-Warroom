@@ -4,19 +4,24 @@ A real (backend + database) rebuild of the IP Production Command Center prototyp
 per `Dashboard_PRD_2`: one shared, multi-user-editable view of content production
 across Cohort Leader → Client → IP CS → IP → Designer → Editor → Output.
 
-Stack: Next.js (App Router, Server Actions) + PostgreSQL via Prisma. Password sign-in with
+Stack: Next.js (App Router, Server Actions) + MongoDB (official `mongodb` driver). Password sign-in with
 database sessions; admins manage people and logins in the app.
 
 ## Getting started
 
-1. Have a Postgres instance reachable (locally: `sudo -u postgres psql` and create
-   a role + database, or use a hosted one like Neon/Supabase/Render).
-2. Copy `.env.example` to `.env` and set `DATABASE_URL`.
-3. Install dependencies and set up the schema:
+1. Have a MongoDB database reachable (locally: `mongod`, or a hosted one like MongoDB Atlas).
+2. Create a `.env` file with:
+
+   ```
+   MONGODB_URI="mongodb://127.0.0.1:27017/warroom"
+   # Optional: database name, if it isn't part of the URI
+   # MONGODB_DB="warroom"
+   ```
+
+3. Install dependencies and load the launch data (this also creates the indexes):
 
    ```bash
    npm install
-   npx prisma migrate dev
    npm run db:seed
    ```
 
@@ -28,30 +33,15 @@ database sessions; admins manage people and logins in the app.
 
    Open http://localhost:3000.
 
-## Deploying (Vercel + Supabase)
+## Deploying (Vercel + MongoDB Atlas)
 
-1. **Supabase**: create a project at supabase.com. In **Project Settings →
-   Database → Connection string**, copy two URIs:
-   - **Transaction pooler** (port `6543`, hostname like
-     `aws-0-<region>.pooler.supabase.com`) → this is `DATABASE_URL`.
-   - **Direct connection** (port `5432`, hostname like
-     `db.<project-ref>.supabase.co`) → this is `DIRECT_URL`.
-   Both have the placeholder `[YOUR-PASSWORD]` — fill in the database
-   password you set when creating the project.
-2. **Vercel**: import this GitHub repo as a new project. In its Environment
-   Variables settings, set:
-   - `DATABASE_URL` → the transaction pooler URI
-   - `DIRECT_URL` → the direct connection URI
-3. Deploy. The build runs `scripts/migrate-deploy.mjs` (applies migrations
-   over `DIRECT_URL`) before `next build`; the app itself always talks to
-   Postgres over pooled `DATABASE_URL`. The build also loads
-   the launch data on the first deploy (and never again).
-4. Every subsequent `git push` to the connected branch redeploys
-   automatically — migrations and all.
-
-This same `DATABASE_URL`/`DIRECT_URL` split works with any pooled Postgres
-provider (Neon, Supabase, PgBouncer) without code changes — only the two
-connection strings differ.
+1. **Atlas**: create a cluster and a database user, allow Vercel's network access, and copy the
+   connection string (`mongodb+srv://...`) → this is `MONGODB_URI`.
+2. **Vercel**: import this GitHub repo as a new project and set `MONGODB_URI`
+   (and optionally `MONGODB_DB`) in its Environment Variables.
+3. Deploy. The build runs `scripts/seed-once.mjs` before `next build`: it creates the
+   collection indexes and loads the launch data on the first deploy (and never again).
+4. Every subsequent `git push` to the connected branch redeploys automatically.
 
 ## What's here
 
@@ -71,13 +61,15 @@ Everyone signs in (name or email + password). **Admins** (Ishika, Unnati) have t
 
 ### Signing in for the first time
 
-The first deploy loads the launch data once (`scripts/seed-once.mjs` → `prisma/seed.ts`; later deploys never overwrite anything). Ishika and Unnati sign in with the one-time setup codes they were given and choose their own passwords. They then use **Admin → People & Logins → Create login** to issue each teammate a one-time password; everyone chooses their own password on first sign-in.
+The first deploy loads the launch data once (`scripts/seed-once.mjs` → `scripts/seed.ts`; later deploys never overwrite anything). Ishika and Unnati sign in with the one-time setup codes they were given and choose their own passwords. They then use **Admin → People & Logins → Create login** to issue each teammate a one-time password; everyone chooses their own password on first sign-in.
 
 ## Architecture
 
-- `prisma/schema.prisma` — full data model (cohorts, clients, IPs, roster people
-  + role assignments, client×IP status, rotation cycles/entries/assignments,
-  trades, cohort weekly status, attendance).
+- `src/lib/models.ts` — document shapes (cohorts, brands, IPs, roster people
+  + role assignments, brand×IP months, rotation cycles/entries/assignments,
+  trades, cohort weekly status, attendance). `src/lib/db.ts` — the MongoDB
+  connection, a small typed repository per collection, and `ensureIndexes()`
+  (the unique constraints). Documents are stored with `_id` and exposed as `id`.
 - `src/lib/queries.ts` — server-side reads, called directly from Server
   Components (no separate REST layer needed for reads).
 - `src/lib/actions.ts` — `"use server"` mutations, called directly from Client
